@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>転職助けるくん</title>
+
+<!-- ホーム画面追加（PWA）対応 -->
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#1A1D1B" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="転職助けるくん" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #FFFFFF; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
+
+/* ---------- 簡易アイコン（依存なしの手書きSVG） ---------- */
+const Icon = ({ children, size = 16, strokeWidth = 2 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+);
+const Calendar = (p) => <Icon {...p}><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></Icon>;
+const Building2 = (p) => <Icon {...p}><rect x="4" y="3" width="16" height="18"/><line x1="9" y1="7" x2="9" y2="7.01"/><line x1="15" y1="7" x2="15" y2="7.01"/><line x1="9" y1="12" x2="9" y2="12.01"/><line x1="15" y1="12" x2="15" y2="12.01"/><line x1="9" y1="17" x2="15" y2="17"/></Icon>;
+const ChevronRight = (p) => <Icon {...p}><polyline points="9 6 15 12 9 18"/></Icon>;
+const ChevronLeft = (p) => <Icon {...p}><polyline points="15 6 9 12 15 18"/></Icon>;
+const X = (p) => <Icon {...p}><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></Icon>;
+const Plus = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
+const Clock = (p) => <Icon {...p}><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></Icon>;
+const MapPin = (p) => <Icon {...p}><path d="M12 21s7-6.5 7-11.5A7 7 0 0 0 5 9.5C5 14.5 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.3"/></Icon>;
+const Trash2 = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></Icon>;
+const ListChecks = (p) => <Icon {...p}><polyline points="3 6 4.5 7.5 7.5 4.5"/><polyline points="3 13 4.5 14.5 7.5 11.5"/><line x1="11" y1="6" x2="21" y2="6"/><line x1="11" y1="13" x2="21" y2="13"/><line x1="11" y1="20" x2="21" y2="20"/></Icon>;
+const ArrowUpDown = (p) => <Icon {...p}><polyline points="7 15 3 19 3 5"/><polyline points="17 9 21 5 21 19"/></Icon>;
+
+/* ---------- ここから本体ロジック ---------- */
+const STAGES = [
+  { key: 'entry', label: '書類選考', short: '書類' },
+  { key: 'first', label: '一次面接', short: '一次' },
+  { key: 'second', label: '二次面接', short: '二次' },
+  { key: 'final', label: '最終面接', short: '最終' },
+  { key: 'offer', label: '内定', short: '内定' },
+];
+const REJECTED = 'rejected';
+const SIZES = ['大手', '中小', 'ベンチャー'];
+const STORAGE_KEY = 'job-hunt-command-v1';
+
+const STAGE_COLOR = {
+  entry: '#1E3A5F', first: '#1E3A5F', second: '#1E3A5F', final: '#1E3A5F',
+  offer: '#A67C27', rejected: '#B33A2E',
+};
+
+function stageIndex(status) {
+  if (status === REJECTED) return -1;
+  return STAGES.findIndex(s => s.key === status);
+}
+function stampLabel(status) {
+  if (status === REJECTED) return '否';
+  if (status === 'offer') return '内定';
+  const idx = stageIndex(status);
+  return STAGES[idx]?.short || '';
+}
+
+function loadCompanies() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return [{
+    id: 'c1', name: '株式会社サンプル商事', industry: '総合商社', jobType: '経営企画',
+    companySize: '大手', salary: 550, description: '', jobDescription: '', status: 'first',
+    motivation: '', events: [{ id: 'e1', title: '一次面接', date: '2026-07-15', time: '14:00', place: 'オンライン(Zoom)' }],
+  }];
+}
+
+function StageTrack({ status }) {
+  const idx = stageIndex(status);
+  const isRejected = status === REJECTED;
+  return (
+    <div className="stage-track">
+      {STAGES.map((s, i) => {
+        const done = !isRejected && i <= idx;
+        const isCurrent = !isRejected && i === idx;
+        return (
+          <React.Fragment key={s.key}>
+            <div className={`stage-node ${done ? 'done' : ''} ${isCurrent ? 'current' : ''}`}>
+              <span className="stage-dot" />
+              <span className="stage-label">{s.short}</span>
+            </div>
+            {i < STAGES.length - 1 && <div className={`stage-line ${!isRejected && i < idx ? 'done' : ''}`} />}
+          </React.Fragment>
+        );
+      })}
+      {isRejected && <span className="rejected-tag">不採用</span>}
+    </div>
+  );
+}
+
+function CompanyCard({ company, onOpen, index }) {
+  const nextEvent = company.events
+    .slice()
+    .sort((a, b) => new Date(a.date + 'T' + (a.time || '00:00')) - new Date(b.date + 'T' + (b.time || '00:00')))
+    .find(e => new Date(e.date) >= new Date(new Date().toDateString()));
+  const color = STAGE_COLOR[company.status];
+  return (
+    <div className="company-card" onClick={() => onOpen(company.id)}>
+      <div className="card-file-tab">FILE No.{String(index + 1).padStart(3, '0')}</div>
+      <div className="card-main">
+        <div className="card-body">
+          <h3 className="card-name">{company.name}</h3>
+          <p className="card-industry">{company.industry || '業種未設定'}</p>
+          <div className="card-chip-row">
+            {company.jobType && <span className="info-chip">{company.jobType}</span>}
+            {company.companySize && <span className="info-chip">{company.companySize}</span>}
+            {!!company.salary && <span className="info-chip salary">年収 {company.salary}万円</span>}
+          </div>
+          <StageTrack status={company.status} />
+          {nextEvent && (
+            <div className="card-next-event">
+              <Clock size={12} strokeWidth={2} />
+              <span>{nextEvent.date} {nextEvent.time} — {nextEvent.title}</span>
+            </div>
+          )}
+        </div>
+        <div className="stamp" style={{ color, borderColor: color }}>
+          <span className="stamp-text">{stampLabel(company.status)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompanyDetail({ company, onClose, onUpdate, onDelete }) {
+  const [local, setLocal] = useState(company);
+  const [newEvent, setNewEvent] = useState({ title: '', date: '', time: '', place: '' });
+  const [tab, setTab] = useState('info');
+
+  const save = (patch) => {
+    const updated = { ...local, ...patch };
+    setLocal(updated);
+    onUpdate(updated);
+  };
+  const addEvent = () => {
+    if (!newEvent.title || !newEvent.date) return;
+    const ev = { ...newEvent, id: 'e' + Date.now() };
+    save({ events: [...local.events, ev] });
+    setNewEvent({ title: '', date: '', time: '', place: '' });
+  };
+  const removeEvent = (id) => save({ events: local.events.filter(e => e.id !== id) });
+
+  return (
+    <div className="detail-overlay" onClick={onClose}>
+      <div className="detail-panel" onClick={e => e.stopPropagation()}>
+        <div className="detail-header">
+          <div style={{ flex: 1 }}>
+            <div className="card-file-tab">FILE No.{local.id.replace(/\D/g, '').slice(-3).padStart(3, '0')}</div>
+            <input className="detail-name-input" value={local.name} onChange={e => save({ name: e.target.value })} placeholder="企業名" />
+            <input className="detail-industry-input" value={local.industry} onChange={e => save({ industry: e.target.value })} placeholder="業種" />
+          </div>
+          <button className="icon-btn" onClick={onClose}><X size={20} /></button>
+        </div>
+
+        <div className="detail-stage-section">
+          <StageTrack status={local.status} />
+          <div className="stage-selector">
+            {STAGES.map(s => (
+              <button key={s.key} className={`stage-btn ${local.status === s.key ? 'active' : ''}`} onClick={() => save({ status: s.key })}>{s.short}</button>
+            ))}
+            <button className={`stage-btn reject ${local.status === REJECTED ? 'active' : ''}`} onClick={() => save({ status: REJECTED })}>不採用</button>
+          </div>
+        </div>
+
+        <div className="detail-tabs">
+          <button className={`tab-btn ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}><Building2 size={14} /> 企業情報</button>
+          <button className={`tab-btn ${tab === 'motivation' ? 'active' : ''}`} onClick={() => setTab('motivation')}>志望動機</button>
+          <button className={`tab-btn ${tab === 'schedule' ? 'active' : ''}`} onClick={() => setTab('schedule')}><Calendar size={14} /> 予定</button>
+        </div>
+
+        {tab === 'info' && (
+          <div className="tab-content">
+            <div className="info-grid">
+              <label className="info-field">
+                <span>職種</span>
+                <input value={local.jobType || ''} onChange={e => save({ jobType: e.target.value })} placeholder="例）経営企画" />
+              </label>
+              <label className="info-field">
+                <span>企業規模</span>
+                <div className="size-select-row">
+                  {SIZES.map(s => (
+                    <button key={s} className={`size-btn ${local.companySize === s ? 'active' : ''}`} onClick={() => save({ companySize: s })}>{s}</button>
+                  ))}
+                </div>
+              </label>
+              <label className="info-field">
+                <span>想定年収（万円）</span>
+                <input type="number" value={local.salary || ''} onChange={e => save({ salary: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="例）500" />
+              </label>
+            </div>
+            <label className="info-field block">
+              <span>企業説明</span>
+              <textarea className="info-textarea" value={local.description || ''} onChange={e => save({ description: e.target.value })} placeholder="事業内容、社風、規模感などをメモ" />
+            </label>
+            <label className="info-field block">
+              <span>職務内容</span>
+              <textarea className="info-textarea" value={local.jobDescription || ''} onChange={e => save({ jobDescription: e.target.value })} placeholder="募集ポジションの業務内容、求められるスキルなど" />
+            </label>
+          </div>
+        )}
+
+        {tab === 'motivation' && (
+          <div className="tab-content">
+            <textarea className="motivation-textarea" value={local.motivation} onChange={e => save({ motivation: e.target.value })}
+              placeholder={"この企業への志望動機・アピールしたいポイントをここに書く。\n\n例）\n・なぜこの会社か\n・自分の強みとどう繋がるか\n・入社後どう貢献するか"} />
+          </div>
+        )}
+
+        {tab === 'schedule' && (
+          <div className="tab-content">
+            <div className="event-list">
+              {local.events.length === 0 && <p className="empty-note">予定はまだ登録されていない。</p>}
+              {local.events.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map(ev => (
+                <div key={ev.id} className="event-row">
+                  <div className="event-date-badge">
+                    <span className="event-date-day">{ev.date?.split('-')[2]}</span>
+                    <span className="event-date-month">{ev.date?.split('-')[1]}月</span>
+                  </div>
+                  <div className="event-info">
+                    <div className="event-title">{ev.title}</div>
+                    <div className="event-meta">
+                      {ev.time && <span><Clock size={11} /> {ev.time}</span>}
+                      {ev.place && <span><MapPin size={11} /> {ev.place}</span>}
+                    </div>
+                  </div>
+                  <button className="icon-btn small" onClick={() => removeEvent(ev.id)}><Trash2 size={14} /></button>
+                </div>
+              ))}
+            </div>
+            <div className="event-add-form">
+              <input placeholder="予定名（例：一次面接）" value={newEvent.title} onChange={e => setNewEvent({ ...newEvent, title: e.target.value })} />
+              <div className="event-add-row">
+                <input type="date" value={newEvent.date} onChange={e => setNewEvent({ ...newEvent, date: e.target.value })} />
+                <input type="time" value={newEvent.time} onChange={e => setNewEvent({ ...newEvent, time: e.target.value })} />
+              </div>
+              <input placeholder="場所（例：オンライン / 本社3F）" value={newEvent.place} onChange={e => setNewEvent({ ...newEvent, place: e.target.value })} />
+              <button className="add-event-btn" onClick={addEvent}><Plus size={14} /> 予定を追加</button>
+            </div>
+          </div>
+        )}
+
+        <button className="delete-company-btn" onClick={() => { onDelete(local.id); onClose(); }}><Trash2 size={13} /> この企業を削除する</button>
+      </div>
+    </div>
+  );
+}
+
+function CalendarView({ companies }) {
+  const [cursor, setCursor] = useState(new Date());
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+
+  const allEvents = useMemo(() => {
+    const map = {};
+    companies.forEach(c => {
+      c.events.forEach(e => {
+        if (!map[e.date]) map[e.date] = [];
+        map[e.date].push({ ...e, company: c.name, status: c.status });
+      });
+    });
+    return map;
+  }, [companies]);
+
+  const firstDay = new Date(year, month, 1);
+  const startWeekday = firstDay.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const pad = (n) => String(n).padStart(2, '0');
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  return (
+    <div className="calendar-view">
+      <div className="calendar-header">
+        <button className="icon-btn" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft size={18} /></button>
+        <h2>{year}年 {month + 1}月</h2>
+        <button className="icon-btn" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight size={18} /></button>
+      </div>
+      <div className="calendar-grid">
+        {['日', '月', '火', '水', '木', '金', '土'].map(d => <div key={d} className="calendar-weekday">{d}</div>)}
+        {cells.map((d, i) => {
+          if (d === null) return <div key={i} className="calendar-cell empty" />;
+          const dateStr = `${year}-${pad(month + 1)}-${pad(d)}`;
+          const dayEvents = allEvents[dateStr] || [];
+          const isToday = dateStr === todayStr;
+          return (
+            <div key={i} className={`calendar-cell ${isToday ? 'today' : ''}`}>
+              <span className="cell-day-num">{d}</span>
+              {dayEvents.map(ev => (
+                <div key={ev.id} className="cell-event" style={{ borderLeftColor: STAGE_COLOR[ev.status] }}>
+                  <span className="cell-event-company">{ev.company}</span>
+                  <span className="cell-event-title">{ev.title}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StatusBoard({ companies, onOpen }) {
+  const columns = [...STAGES, { key: REJECTED, label: '不採用', short: '不採用' }];
+  return (
+    <div className="status-board">
+      {columns.map(col => {
+        const items = companies.filter(c => c.status === col.key);
+        return (
+          <div key={col.key} className="status-column">
+            <div className="status-column-header" style={{ borderColor: STAGE_COLOR[col.key] }}>
+              <span style={{ color: STAGE_COLOR[col.key] }}>{col.label}</span>
+              <span className="status-column-count">{items.length}</span>
+            </div>
+            <div className="status-column-body">
+              {items.length === 0 && <p className="empty-note small">なし</p>}
+              {items.map(c => (
+                <div key={c.id} className="status-mini-card" onClick={() => onOpen(c.id)}>
+                  <div className="status-mini-name">{c.name}</div>
+                  <div className="status-mini-meta">
+                    {c.jobType && <span>{c.jobType}</span>}
+                    {!!c.salary && <span>{c.salary}万円</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const SORT_MODES = [
+  { key: 'normal', label: '通常' },
+  { key: 'salary', label: '年収順' },
+  { key: 'jobType', label: '職種別' },
+  { key: 'size', label: '規模別' },
+];
+
+function CompanyListView({ companies, onOpen, showAdd, setShowAdd, form, setForm, onAdd }) {
+  const [sortMode, setSortMode] = useState('normal');
+
+  const grouped = useMemo(() => {
+    const withIndex = companies.map((c, i) => ({ c, i }));
+    if (sortMode === 'normal') return [{ label: null, items: withIndex }];
+    if (sortMode === 'salary') return [{ label: null, items: withIndex.slice().sort((a, b) => (b.c.salary || 0) - (a.c.salary || 0)) }];
+    if (sortMode === 'jobType') {
+      const groups = {};
+      withIndex.forEach(item => { const key = item.c.jobType || '未分類'; (groups[key] = groups[key] || []).push(item); });
+      return Object.keys(groups).sort().map(k => ({ label: k, items: groups[k] }));
+    }
+    if (sortMode === 'size') {
+      const order = [...SIZES, '未分類'];
+      const groups = {};
+      withIndex.forEach(item => { const key = item.c.companySize || '未分類'; (groups[key] = groups[key] || []).push(item); });
+      return order.filter(k => groups[k]).map(k => ({ label: k, items: groups[k] }));
+    }
+    return [{ label: null, items: withIndex }];
+  }, [companies, sortMode]);
+
+  return (
+    <React.Fragment>
+      {!showAdd && <button className="add-company-btn" onClick={() => setShowAdd(true)}><Plus size={15} /> 企業を登録する</button>}
+      {showAdd && (
+        <div className="add-form">
+          <input placeholder="企業名" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} autoFocus />
+          <div className="add-form-row">
+            <input placeholder="業種（任意）" value={form.industry} onChange={e => setForm({ ...form, industry: e.target.value })} />
+            <input placeholder="職種（任意）" value={form.jobType} onChange={e => setForm({ ...form, jobType: e.target.value })} />
+          </div>
+          <div className="add-form-row">
+            <select value={form.companySize} onChange={e => setForm({ ...form, companySize: e.target.value })}>
+              <option value="">企業規模を選択</option>
+              {SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <input type="number" placeholder="想定年収（万円）" value={form.salary} onChange={e => setForm({ ...form, salary: e.target.value })} />
+          </div>
+          <div className="add-form-actions">
+            <button className="confirm" onClick={onAdd}>登録</button>
+            <button className="cancel" onClick={() => setShowAdd(false)}>キャンセル</button>
+          </div>
+        </div>
+      )}
+
+      {companies.length > 0 && (
+        <div className="sort-bar">
+          <ArrowUpDown size={13} />
+          {SORT_MODES.map(m => (
+            <button key={m.key} className={`sort-btn ${sortMode === m.key ? 'active' : ''}`} onClick={() => setSortMode(m.key)}>{m.label}</button>
+          ))}
+        </div>
+      )}
+
+      {companies.length === 0 ? (
+        <div className="empty-state">まだ企業が登録されていない。<br />上のボタンから最初の1社を登録しよう。</div>
+      ) : (
+        <div className="company-list">
+          {grouped.map((group, gi) => (
+            <React.Fragment key={gi}>
+              {group.label && <div className="group-header">{group.label}<span>{group.items.length}件</span></div>}
+              {group.items.map(({ c, i }) => <CompanyCard key={c.id} company={c} onOpen={onOpen} index={i} />)}
+            </React.Fragment>
+          ))}
+        </div>
+      )}
+    </React.Fragment>
+  );
+}
+
+function JobHuntCommand() {
+  const [companies, setCompanies] = useState(loadCompanies);
+  const [view, setView] = useState('list');
+  const [openId, setOpenId] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ name: '', industry: '', jobType: '', companySize: '', salary: '' });
+
+  React.useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(companies)); } catch (e) {}
+  }, [companies]);
+
+  const openCompany = companies.find(c => c.id === openId);
+
+  const addCompany = () => {
+    if (!form.name.trim()) return;
+    const id = 'c' + Date.now();
+    setCompanies([...companies, {
+      id, name: form.name.trim(), industry: form.industry.trim(), jobType: form.jobType.trim(),
+      companySize: form.companySize, salary: form.salary === '' ? '' : Number(form.salary),
+      description: '', jobDescription: '', status: 'entry', motivation: '', events: [],
+    }]);
+    setForm({ name: '', industry: '', jobType: '', companySize: '', salary: '' });
+    setShowAdd(false);
+  };
+  const updateCompany = (updated) => setCompanies(companies.map(c => c.id === updated.id ? updated : c));
+  const deleteCompany = (id) => setCompanies(companies.filter(c => c.id !== id));
+
+  const stats = useMemo(() => {
+    const active = companies.filter(c => c.status !== REJECTED && c.status !== 'offer').length;
+    const offers = companies.filter(c => c.status === 'offer').length;
+    const rejected = companies.filter(c => c.status === REJECTED).length;
+    return { total: companies.length, active, offers, rejected };
+  }, [companies]);
+
+  return (
+    <div className="app-root">
+      <div className="header-bar">
+        <div>
+          <div className="header-eyebrow">JOB HUNT COMMAND</div>
+          <h1 className="header-title">転職助けるくん</h1>
+        </div>
+        <div className="header-seal">決裁</div>
+      </div>
+
+      <div className="stats-strip">
+        <div className="stat-box"><span className="stat-num">{stats.total}</span><span className="stat-label">登録企業</span></div>
+        <div className="stat-box"><span className="stat-num" style={{ color: '#1E3A5F' }}>{stats.active}</span><span className="stat-label">選考中</span></div>
+        <div className="stat-box"><span className="stat-num" style={{ color: '#A67C27' }}>{stats.offers}</span><span className="stat-label">内定</span></div>
+        <div className="stat-box"><span className="stat-num" style={{ color: '#B33A2E' }}>{stats.rejected}</span><span className="stat-label">不採用</span></div>
+      </div>
+
+      {view === 'list' && (
+        <CompanyListView companies={companies} onOpen={setOpenId} showAdd={showAdd} setShowAdd={setShowAdd} form={form} setForm={setForm} onAdd={addCompany} />
+      )}
+      {view === 'calendar' && <CalendarView companies={companies} />}
+      {view === 'status' && <StatusBoard companies={companies} onOpen={setOpenId} />}
+
+      {openCompany && (
+        <CompanyDetail company={openCompany} onClose={() => setOpenId(null)} onUpdate={updateCompany} onDelete={deleteCompany} />
+      )}
+
+      <div className="bottom-nav">
+        <button className={`bottom-nav-btn ${view === 'list' ? 'active' : ''}`} onClick={() => setView('list')}>
+          {view === 'list' && <span className="nav-indicator" />}<Building2 size={19} />企業一覧
+        </button>
+        <button className={`bottom-nav-btn ${view === 'calendar' ? 'active' : ''}`} onClick={() => setView('calendar')}>
+          {view === 'calendar' && <span className="nav-indicator" />}<Calendar size={19} />カレンダー
+        </button>
+        <button className={`bottom-nav-btn ${view === 'status' ? 'active' : ''}`} onClick={() => setView('status')}>
+          {view === 'status' && <span className="nav-indicator" />}<ListChecks size={19} />選考状況
+        </button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<JobHuntCommand />);
+</script>
+
+<style>
+  :root {
+    --ink: #1A1D1B; --ink-soft: #55605A; --ink-faint: #9AA39D;
+    --paper: #FFFFFF; --paper-line: #E7E4DC;
+    --navy: #1E3A5F; --navy-soft: rgba(30,58,95,0.07);
+    --brass: #A67C27; --brass-soft: rgba(166,124,39,0.09);
+    --vermilion: #B33A2E; --vermilion-soft: rgba(179,58,46,0.08);
+  }
+  * { box-sizing: border-box; }
+  .app-root {
+    min-height: 100vh;
+    background: repeating-linear-gradient(0deg, transparent, transparent 27px, var(--paper-line) 27px, var(--paper-line) 28px), var(--paper);
+    color: var(--ink);
+    font-family: 'Zen Kaku Gothic New', 'Hiragino Sans', sans-serif;
+    padding: 24px 18px 90px;
+  }
+  .header-bar { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 22px; flex-wrap: wrap; gap: 8px; border-bottom: 2px solid var(--ink); padding-bottom: 14px; }
+  .header-eyebrow { font-size: 11px; letter-spacing: 0.28em; color: var(--navy); font-weight: 700; }
+  .header-title { font-family: 'Shippori Mincho', serif; font-size: 28px; font-weight: 800; margin: 3px 0 0; letter-spacing: 0.03em; }
+  .header-seal { width: 46px; height: 46px; border: 2.5px solid var(--vermilion); border-radius: 6px; color: var(--vermilion); display: flex; align-items: center; justify-content: center; font-family: 'Shippori Mincho', serif; font-weight: 800; font-size: 14px; letter-spacing: 0.1em; transform: rotate(-3deg); flex-shrink: 0; }
+  .stats-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 22px; }
+  .stat-box { background: var(--paper); border: 1px solid var(--ink); border-radius: 2px; padding: 12px 6px 10px; text-align: center; position: relative; }
+  .stat-box::before { content: ''; position: absolute; top: 4px; left: 4px; right: -4px; bottom: -4px; border: 1px solid var(--paper-line); z-index: -1; }
+  .stat-num { font-family: 'Shippori Mincho', serif; font-size: 25px; font-weight: 800; display: block; line-height: 1.1; color: var(--ink); }
+  .stat-label { font-size: 10px; color: var(--ink-soft); letter-spacing: 0.08em; font-weight: 500; }
+  .add-company-btn { width: 100%; background: var(--navy-soft); border: 1.5px dashed var(--navy); color: var(--navy); padding: 13px; border-radius: 3px; font-family: inherit; font-weight: 700; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 16px; }
+  .add-form { background: #FBFAF7; border: 1px solid var(--ink); border-radius: 3px; padding: 16px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 9px; }
+  .add-form-row { display: flex; gap: 9px; }
+  .add-form-row > * { flex: 1; min-width: 0; }
+  .add-form input, .add-form select { background: var(--paper); border: 1px solid var(--paper-line); border-bottom: 2px solid var(--ink-faint); color: var(--ink); padding: 10px 11px; border-radius: 2px; font-family: inherit; font-size: 14px; width: 100%; }
+  .add-form input:focus, .add-form select:focus { outline: none; border-bottom-color: var(--navy); }
+  .add-form-actions { display: flex; gap: 8px; }
+  .add-form-actions button { flex: 1; padding: 10px; border-radius: 2px; border: none; font-family: inherit; font-weight: 700; font-size: 13px; cursor: pointer; }
+  .add-form-actions .confirm { background: var(--navy); color: #fff; }
+  .add-form-actions .cancel { background: var(--paper-line); color: var(--ink); }
+  .sort-bar { display: flex; align-items: center; gap: 6px; color: var(--ink-faint); margin-bottom: 14px; flex-wrap: wrap; }
+  .sort-btn { background: var(--paper); border: 1px solid var(--paper-line); color: var(--ink-soft); font-family: inherit; font-size: 11.5px; font-weight: 700; padding: 6px 12px; border-radius: 20px; cursor: pointer; }
+  .sort-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .group-header { display: flex; justify-content: space-between; align-items: baseline; font-family: 'Shippori Mincho', serif; font-size: 14px; font-weight: 700; color: var(--navy); border-bottom: 1px solid var(--paper-line); padding-bottom: 6px; margin: 6px 0 2px; }
+  .group-header span { font-family: inherit; font-size: 11px; color: var(--ink-faint); font-weight: 500; }
+  .company-list { display: flex; flex-direction: column; gap: 14px; }
+  .company-card { background: var(--paper); border: 1px solid var(--ink); border-radius: 2px; padding: 0; cursor: pointer; position: relative; box-shadow: 4px 4px 0 rgba(0,0,0,0.04); transition: box-shadow 0.15s, transform 0.15s; }
+  .company-card:active { box-shadow: 2px 2px 0 rgba(0,0,0,0.06); transform: translate(1px, 1px); }
+  .card-file-tab { font-size: 10px; letter-spacing: 0.14em; color: var(--paper); background: var(--ink); font-weight: 700; padding: 3px 10px; display: inline-block; border-radius: 0 0 3px 0; }
+  .card-main { display: flex; justify-content: space-between; align-items: flex-start; padding: 12px 16px 16px; gap: 12px; }
+  .card-body { flex: 1; min-width: 0; }
+  .card-name { font-family: 'Shippori Mincho', serif; font-size: 17px; font-weight: 700; margin: 2px 0 2px; }
+  .card-industry { font-size: 12px; color: var(--ink-soft); margin: 0 0 8px; }
+  .card-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .info-chip { font-size: 10.5px; font-weight: 700; color: var(--navy); background: var(--navy-soft); border: 1px solid rgba(30,58,95,0.25); border-radius: 3px; padding: 2px 8px; }
+  .info-chip.salary { color: var(--brass); background: var(--brass-soft); border-color: rgba(166,124,39,0.35); }
+  .stamp { width: 54px; height: 54px; border: 2.5px solid; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transform: rotate(-4deg); position: relative; margin-top: 4px; }
+  .stamp::after { content: ''; position: absolute; inset: 3px; border: 1px solid currentColor; border-radius: 3px; opacity: 0.5; }
+  .stamp-text { font-family: 'Shippori Mincho', serif; font-weight: 800; font-size: 13px; letter-spacing: 0.05em; }
+  .stage-track { display: flex; align-items: center; margin-bottom: 10px; }
+  .stage-node { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
+  .stage-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--paper-line); border: 1px solid var(--paper-line); display: block; }
+  .stage-node.done .stage-dot { background: var(--navy); border-color: var(--navy); }
+  .stage-node.current .stage-dot { background: var(--brass); border-color: var(--brass); box-shadow: 0 0 0 3px var(--brass-soft); }
+  .stage-label { font-size: 9px; color: var(--ink-faint); font-weight: 700; }
+  .stage-node.done .stage-label, .stage-node.current .stage-label { color: var(--ink); }
+  .stage-line { flex: 1; height: 1px; background: var(--paper-line); margin: 0 2px; margin-bottom: 14px; }
+  .stage-line.done { background: var(--navy); }
+  .rejected-tag { margin-left: auto; font-size: 10px; color: var(--vermilion); font-weight: 700; border: 1px solid var(--vermilion); border-radius: 20px; padding: 2px 8px; }
+  .card-next-event { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-soft); padding-top: 9px; border-top: 1px dashed var(--paper-line); }
+  .empty-state { text-align: center; padding: 44px 20px; color: var(--ink-faint); font-size: 13px; }
+  .empty-note { color: var(--ink-faint); font-size: 12px; text-align: center; padding: 12px; }
+  .empty-note.small { padding: 16px 4px; font-size: 11px; }
+  .detail-overlay { position: fixed; inset: 0; background: rgba(26,29,27,0.45); display: flex; align-items: flex-end; z-index: 50; }
+  .detail-panel { background: var(--paper); width: 100%; max-height: 92vh; overflow-y: auto; border-radius: 14px 14px 0 0; padding: 20px 18px 26px; border-top: 3px solid var(--ink); }
+  .detail-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 10px; }
+  .detail-name-input { background: none; border: none; border-bottom: 1px solid transparent; color: var(--ink); font-family: 'Shippori Mincho', serif; font-size: 20px; font-weight: 800; width: 100%; padding: 3px 0; margin-top: 4px; }
+  .detail-name-input:focus { outline: none; border-bottom-color: var(--navy); }
+  .detail-industry-input { background: none; border: none; color: var(--ink-soft); font-size: 12px; font-family: inherit; width: 100%; padding: 2px 0; }
+  .detail-industry-input:focus { outline: none; }
+  .icon-btn { background: #F3F1EB; border: 1px solid var(--paper-line); color: var(--ink); width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
+  .icon-btn.small { width: 26px; height: 26px; }
+  .detail-stage-section { background: #FBFAF7; border: 1px solid var(--paper-line); border-radius: 5px; padding: 14px; margin-bottom: 16px; }
+  .stage-selector { display: flex; gap: 5px; margin-top: 12px; flex-wrap: wrap; }
+  .stage-btn { background: var(--paper); border: 1px solid var(--paper-line); color: var(--ink-soft); font-family: inherit; font-size: 11px; font-weight: 700; padding: 6px 11px; border-radius: 20px; cursor: pointer; }
+  .stage-btn.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .stage-btn.reject.active { background: var(--vermilion); border-color: var(--vermilion); }
+  .detail-tabs { display: flex; gap: 4px; margin-bottom: 14px; }
+  .tab-btn { flex: 1; background: var(--paper); border: 1px solid var(--paper-line); color: var(--ink-faint); font-family: inherit; font-size: 12px; font-weight: 700; padding: 10px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
+  .tab-btn.active { color: var(--brass); border-color: var(--brass); background: var(--brass-soft); }
+  .info-grid { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+  .info-field { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 700; color: var(--ink-soft); }
+  .info-field.block { margin-bottom: 14px; }
+  .info-field input { background: #FBFAF7; border: 1px solid var(--paper-line); color: var(--ink); padding: 9px 10px; border-radius: 3px; font-family: inherit; font-size: 13px; font-weight: 400; }
+  .info-field input:focus { outline: none; border-color: var(--navy); }
+  .info-textarea { width: 100%; min-height: 90px; background: #FBFAF7; border: 1px solid var(--paper-line); color: var(--ink); font-family: inherit; font-size: 13px; font-weight: 400; line-height: 1.7; padding: 10px; border-radius: 3px; resize: vertical; }
+  .info-textarea:focus { outline: none; border-color: var(--brass); }
+  .size-select-row { display: flex; gap: 6px; }
+  .size-btn { flex: 1; background: var(--paper); border: 1px solid var(--paper-line); color: var(--ink-soft); font-family: inherit; font-size: 12px; font-weight: 700; padding: 8px; border-radius: 3px; cursor: pointer; }
+  .size-btn.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .motivation-textarea { width: 100%; min-height: 220px; background: #FBFAF7; border: 1px solid var(--paper-line); color: var(--ink); font-family: inherit; font-size: 14px; line-height: 1.8; padding: 13px; border-radius: 4px; resize: vertical; }
+  .motivation-textarea:focus { outline: none; border-color: var(--brass); }
+  .event-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .event-row { display: flex; align-items: center; gap: 10px; background: #FBFAF7; border: 1px solid var(--paper-line); border-radius: 4px; padding: 9px 11px; }
+  .event-date-badge { background: var(--brass-soft); border: 1px solid var(--brass); border-radius: 4px; width: 42px; text-align: center; padding: 4px 0; flex-shrink: 0; }
+  .event-date-day { display: block; font-family: 'Shippori Mincho', serif; font-size: 16px; font-weight: 800; color: var(--brass); line-height: 1; }
+  .event-date-month { font-size: 9px; color: var(--brass); }
+  .event-info { flex: 1; min-width: 0; }
+  .event-title { font-size: 13px; font-weight: 700; }
+  .event-meta { display: flex; gap: 10px; font-size: 10px; color: var(--ink-soft); margin-top: 2px; }
+  .event-meta span { display: flex; align-items: center; gap: 3px; }
+  .event-add-form { display: flex; flex-direction: column; gap: 7px; background: var(--paper); border: 1px solid var(--paper-line); border-radius: 4px; padding: 11px; }
+  .event-add-form input { background: #FBFAF7; border: 1px solid var(--paper-line); color: var(--ink); padding: 9px 10px; border-radius: 3px; font-family: inherit; font-size: 13px; }
+  .event-add-row { display: flex; gap: 7px; }
+  .event-add-row input { flex: 1; }
+  .add-event-btn { background: var(--navy); border: 1px solid var(--navy); color: #fff; font-family: inherit; font-weight: 700; font-size: 12px; padding: 9px; border-radius: 3px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
+  .delete-company-btn { width: 100%; margin-top: 20px; background: none; border: 1px solid var(--vermilion); color: var(--vermilion); font-family: inherit; font-size: 12px; padding: 10px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .calendar-view { background: var(--paper); border: 1px solid var(--ink); border-radius: 4px; padding: 16px; box-shadow: 4px 4px 0 rgba(0,0,0,0.04); }
+  .calendar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .calendar-header h2 { font-family: 'Shippori Mincho', serif; font-size: 16px; font-weight: 700; margin: 0; }
+  .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  .calendar-weekday { text-align: center; font-size: 10px; color: var(--ink-faint); font-weight: 700; padding-bottom: 6px; }
+  .calendar-cell { min-height: 64px; background: #FBFAF7; border: 1px solid var(--paper-line); border-radius: 3px; padding: 4px; font-size: 10px; overflow: hidden; }
+  .calendar-cell.empty { background: none; border: none; }
+  .calendar-cell.today { background: var(--brass-soft); border: 1px solid var(--brass); }
+  .cell-day-num { font-size: 10px; color: var(--ink-soft); font-weight: 700; }
+  .cell-event { margin-top: 3px; border-left: 2px solid; padding-left: 4px; display: flex; flex-direction: column; line-height: 1.2; }
+  .cell-event-company { font-size: 8px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cell-event-title { font-size: 9px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status-board { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; margin: 0 -18px; padding-left: 18px; padding-right: 18px; }
+  .status-column { background: #FBFAF7; border: 1px solid var(--paper-line); border-radius: 4px; min-width: 150px; flex-shrink: 0; }
+  .status-column-header { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; padding: 9px 10px; border-bottom: 2px solid; }
+  .status-column-count { font-size: 10px; color: var(--ink-faint); background: var(--paper); border-radius: 10px; padding: 1px 7px; }
+  .status-column-body { padding: 8px; display: flex; flex-direction: column; gap: 7px; min-height: 60px; }
+  .status-mini-card { background: var(--paper); border: 1px solid var(--paper-line); border-radius: 3px; padding: 8px 9px; cursor: pointer; box-shadow: 2px 2px 0 rgba(0,0,0,0.03); }
+  .status-mini-name { font-size: 12px; font-weight: 700; margin-bottom: 3px; line-height: 1.3; }
+  .status-mini-meta { display: flex; gap: 6px; flex-wrap: wrap; font-size: 9.5px; color: var(--ink-faint); }
+  .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: var(--paper); border-top: 1px solid var(--ink); display: flex; z-index: 40; padding-bottom: env(safe-area-inset-bottom, 0); }
+  .bottom-nav-btn { flex: 1; background: none; border: none; color: var(--ink-faint); font-family: inherit; font-size: 10.5px; font-weight: 700; padding: 10px 4px 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; position: relative; }
+  .bottom-nav-btn.active { color: var(--vermilion); }
+  .nav-indicator { position: absolute; top: 0; width: 28px; height: 2px; background: var(--vermilion); left: 50%; transform: translateX(-50%); }
+</style>
+</body>
+</html>
