@@ -25,6 +25,14 @@
   html, body { margin: 0; padding: 0; background: #FFFFFF; }
   #root { min-height: 100vh; }
 </style>
+<script>
+  window.addEventListener('error', function (e) {
+    var root = document.getElementById('root');
+    if (root && !root.hasChildNodes()) {
+      root.innerHTML = '<pre style="color:#B33A2E;padding:20px;white-space:pre-wrap;font-size:12px;">読み込みエラー:\n' + (e.message || e) + '</pre>';
+    }
+  });
+</script>
 </head>
 <body>
 <div id="root"></div>
@@ -509,7 +517,18 @@ function JobHuntCommand() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<JobHuntCommand />);
+try {
+  const rootEl = document.getElementById('root');
+  if (ReactDOM.createRoot) {
+    ReactDOM.createRoot(rootEl).render(<JobHuntCommand />);
+  } else {
+    ReactDOM.render(<JobHuntCommand />, rootEl);
+  }
+} catch (err) {
+  document.getElementById('root').innerHTML =
+    '<pre style="color:#B33A2E;padding:20px;white-space:pre-wrap;font-size:12px;">起動エラー:\n' +
+    (err && err.stack ? err.stack : String(err)) + '</pre>';
+}
 </script>
 
 <style>
