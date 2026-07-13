@@ -56,6 +56,9 @@ const MapPin = (p) => <Icon {...p}><path d="M12 21s7-6.5 7-11.5A7 7 0 0 0 5 9.5C
 const Trash2 = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></Icon>;
 const ListChecks = (p) => <Icon {...p}><polyline points="3 6 4.5 7.5 7.5 4.5"/><polyline points="3 13 4.5 14.5 7.5 11.5"/><line x1="11" y1="6" x2="21" y2="6"/><line x1="11" y1="13" x2="21" y2="13"/><line x1="11" y1="20" x2="21" y2="20"/></Icon>;
 const ArrowUpDown = (p) => <Icon {...p}><polyline points="7 15 3 19 3 5"/><polyline points="17 9 21 5 21 19"/></Icon>;
+const ClipboardCheck = (p) => <Icon {...p}><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1H9V4z"/><polyline points="9 13 11 15 15 10.5"/></Icon>;
+const Square = (p) => <Icon {...p}><rect x="4" y="4" width="16" height="16" rx="3"/></Icon>;
+const CheckSquare = (p) => <Icon {...p}><rect x="4" y="4" width="16" height="16" rx="3"/><polyline points="8 12 11 15 16 9"/></Icon>;
 
 /* ---------- ここから本体ロジック ---------- */
 const STAGES = [
@@ -88,12 +91,16 @@ function stampLabel(status) {
 function loadCompanies() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      // 既存データ互換: submissionsフィールドが無ければ空配列を補う
+      return parsed.map(c => ({ submissions: [], ...c, submissions: c.submissions || [] }));
+    }
   } catch (e) {}
   return [{
     id: 'c1', name: '株式会社サンプル商事', industry: '総合商社', jobType: '経営企画',
     companySize: '大手', salary: 550, description: '', jobDescription: '', status: 'first',
-    motivation: '', events: [{ id: 'e1', title: '一次面接', date: '2026-07-15', time: '14:00', place: 'オンライン(Zoom)' }],
+    motivation: '', submissions: [], events: [{ id: 'e1', title: '一次面接', date: '2026-07-15', time: '14:00', place: 'オンライン(Zoom)' }],
   }];
 }
 
@@ -157,6 +164,7 @@ function CompanyCard({ company, onOpen, index }) {
 function CompanyDetail({ company, onClose, onUpdate, onDelete }) {
   const [local, setLocal] = useState(company);
   const [newEvent, setNewEvent] = useState({ title: '', date: '', time: '', place: '' });
+  const [newSubmission, setNewSubmission] = useState({ title: '', dueDate: '' });
   const [tab, setTab] = useState('info');
 
   const save = (patch) => {
@@ -171,6 +179,16 @@ function CompanyDetail({ company, onClose, onUpdate, onDelete }) {
     setNewEvent({ title: '', date: '', time: '', place: '' });
   };
   const removeEvent = (id) => save({ events: local.events.filter(e => e.id !== id) });
+
+  const submissions = local.submissions || [];
+  const addSubmission = () => {
+    if (!newSubmission.title.trim()) return;
+    const item = { id: 's' + Date.now(), title: newSubmission.title.trim(), dueDate: newSubmission.dueDate, done: false };
+    save({ submissions: [...submissions, item] });
+    setNewSubmission({ title: '', dueDate: '' });
+  };
+  const toggleSubmission = (id) => save({ submissions: submissions.map(s => s.id === id ? { ...s, done: !s.done } : s) });
+  const removeSubmission = (id) => save({ submissions: submissions.filter(s => s.id !== id) });
 
   return (
     <div className="detail-overlay" onClick={onClose}>
@@ -198,6 +216,7 @@ function CompanyDetail({ company, onClose, onUpdate, onDelete }) {
           <button className={`tab-btn ${tab === 'info' ? 'active' : ''}`} onClick={() => setTab('info')}><Building2 size={14} /> 企業情報</button>
           <button className={`tab-btn ${tab === 'motivation' ? 'active' : ''}`} onClick={() => setTab('motivation')}>志望動機</button>
           <button className={`tab-btn ${tab === 'schedule' ? 'active' : ''}`} onClick={() => setTab('schedule')}><Calendar size={14} /> 予定</button>
+          <button className={`tab-btn ${tab === 'submissions' ? 'active' : ''}`} onClick={() => setTab('submissions')}><ClipboardCheck size={14} /> 提出物</button>
         </div>
 
         {tab === 'info' && (
@@ -267,6 +286,34 @@ function CompanyDetail({ company, onClose, onUpdate, onDelete }) {
               </div>
               <input placeholder="場所（例：オンライン / 本社3F）" value={newEvent.place} onChange={e => setNewEvent({ ...newEvent, place: e.target.value })} />
               <button className="add-event-btn" onClick={addEvent}><Plus size={14} /> 予定を追加</button>
+            </div>
+          </div>
+        )}
+
+        {tab === 'submissions' && (
+          <div className="tab-content">
+            <div className="submission-list">
+              {submissions.length === 0 && <p className="empty-note">提出物はまだ登録されていない。</p>}
+              {submissions
+                .slice()
+                .sort((a, b) => (a.done - b.done) || new Date(a.dueDate || '9999-12-31') - new Date(b.dueDate || '9999-12-31'))
+                .map(s => (
+                  <div key={s.id} className={`submission-row ${s.done ? 'done' : ''}`}>
+                    <button className="submission-check" onClick={() => toggleSubmission(s.id)}>
+                      {s.done ? <CheckSquare size={18} /> : <Square size={18} />}
+                    </button>
+                    <div className="submission-info">
+                      <div className="submission-title">{s.title}</div>
+                      {s.dueDate && <div className="submission-due">期限 {s.dueDate}</div>}
+                    </div>
+                    <button className="icon-btn small" onClick={() => removeSubmission(s.id)}><Trash2 size={14} /></button>
+                  </div>
+                ))}
+            </div>
+            <div className="event-add-form">
+              <input placeholder="提出物名（例：履歴書）" value={newSubmission.title} onChange={e => setNewSubmission({ ...newSubmission, title: e.target.value })} />
+              <input type="date" value={newSubmission.dueDate} onChange={e => setNewSubmission({ ...newSubmission, dueDate: e.target.value })} />
+              <button className="add-event-btn" onClick={addSubmission}><Plus size={14} /> 提出物を追加</button>
             </div>
           </div>
         )}
@@ -360,6 +407,101 @@ function StatusBoard({ companies, onOpen }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function SubmissionsOverview({ companies, onUpdate }) {
+  const [quickForm, setQuickForm] = useState({ companyId: '', title: '', dueDate: '' });
+
+  const allItems = useMemo(() => {
+    const items = [];
+    companies.forEach(c => {
+      (c.submissions || []).forEach(s => items.push({ ...s, companyId: c.id, companyName: c.name }));
+    });
+    return items;
+  }, [companies]);
+
+  const pending = allItems.filter(s => !s.done).sort((a, b) => new Date(a.dueDate || '9999-12-31') - new Date(b.dueDate || '9999-12-31'));
+  const done = allItems.filter(s => s.done);
+
+  const toggle = (companyId, id) => {
+    const c = companies.find(c => c.id === companyId);
+    if (!c) return;
+    onUpdate({ ...c, submissions: (c.submissions || []).map(s => s.id === id ? { ...s, done: !s.done } : s) });
+  };
+  const remove = (companyId, id) => {
+    const c = companies.find(c => c.id === companyId);
+    if (!c) return;
+    onUpdate({ ...c, submissions: (c.submissions || []).filter(s => s.id !== id) });
+  };
+  const addQuick = () => {
+    if (!quickForm.companyId || !quickForm.title.trim()) return;
+    const c = companies.find(c => c.id === quickForm.companyId);
+    if (!c) return;
+    const item = { id: 's' + Date.now(), title: quickForm.title.trim(), dueDate: quickForm.dueDate, done: false };
+    onUpdate({ ...c, submissions: [...(c.submissions || []), item] });
+    setQuickForm({ companyId: quickForm.companyId, title: '', dueDate: '' });
+  };
+
+  const isOverdue = (dueDate) => dueDate && new Date(dueDate) < new Date(new Date().toDateString());
+
+  return (
+    <div>
+      <div className="stats-strip" style={{ gridTemplateColumns: 'repeat(2, 1fr)', marginBottom: 16 }}>
+        <div className="stat-box"><span className="stat-num" style={{ color: '#1E3A5F' }}>{pending.length}</span><span className="stat-label">未提出</span></div>
+        <div className="stat-box"><span className="stat-num" style={{ color: '#A67C27' }}>{done.length}</span><span className="stat-label">提出済み</span></div>
+      </div>
+
+      <div className="add-form" style={{ marginBottom: 18 }}>
+        <select value={quickForm.companyId} onChange={e => setQuickForm({ ...quickForm, companyId: e.target.value })}>
+          <option value="">企業を選択</option>
+          {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <input placeholder="提出物名（例：履歴書）" value={quickForm.title} onChange={e => setQuickForm({ ...quickForm, title: e.target.value })} />
+        <input type="date" value={quickForm.dueDate} onChange={e => setQuickForm({ ...quickForm, dueDate: e.target.value })} />
+        <div className="add-form-actions">
+          <button className="confirm" onClick={addQuick}><Plus size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />提出物を追加</button>
+        </div>
+      </div>
+
+      <div className="group-header">未提出<span>{pending.length}件</span></div>
+      {pending.length === 0 && <p className="empty-note">未提出の項目はなし。</p>}
+      <div className="submission-list" style={{ marginBottom: 20 }}>
+        {pending.map(s => (
+          <div key={s.id} className="submission-row">
+            <button className="submission-check" onClick={() => toggle(s.companyId, s.id)}><Square size={18} /></button>
+            <div className="submission-info">
+              <div className="submission-title">{s.title}</div>
+              <div className="submission-meta-row">
+                <span className="info-chip">{s.companyName}</span>
+                {s.dueDate && <span className={`submission-due ${isOverdue(s.dueDate) ? 'overdue' : ''}`}>期限 {s.dueDate}</span>}
+              </div>
+            </div>
+            <button className="icon-btn small" onClick={() => remove(s.companyId, s.id)}><Trash2 size={14} /></button>
+          </div>
+        ))}
+      </div>
+
+      {done.length > 0 && (
+        <React.Fragment>
+          <div className="group-header">提出済み<span>{done.length}件</span></div>
+          <div className="submission-list">
+            {done.map(s => (
+              <div key={s.id} className="submission-row done">
+                <button className="submission-check" onClick={() => toggle(s.companyId, s.id)}><CheckSquare size={18} /></button>
+                <div className="submission-info">
+                  <div className="submission-title">{s.title}</div>
+                  <div className="submission-meta-row">
+                    <span className="info-chip">{s.companyName}</span>
+                  </div>
+                </div>
+                <button className="icon-btn small" onClick={() => remove(s.companyId, s.id)}><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        </React.Fragment>
+      )}
     </div>
   );
 }
@@ -460,7 +602,7 @@ function JobHuntCommand() {
     setCompanies([...companies, {
       id, name: form.name.trim(), industry: form.industry.trim(), jobType: form.jobType.trim(),
       companySize: form.companySize, salary: form.salary === '' ? '' : Number(form.salary),
-      description: '', jobDescription: '', status: 'entry', motivation: '', events: [],
+      description: '', jobDescription: '', status: 'entry', motivation: '', submissions: [], events: [],
     }]);
     setForm({ name: '', industry: '', jobType: '', companySize: '', salary: '' });
     setShowAdd(false);
@@ -497,6 +639,7 @@ function JobHuntCommand() {
       )}
       {view === 'calendar' && <CalendarView companies={companies} />}
       {view === 'status' && <StatusBoard companies={companies} onOpen={setOpenId} />}
+      {view === 'submissions' && <SubmissionsOverview companies={companies} onUpdate={updateCompany} />}
 
       {openCompany && (
         <CompanyDetail company={openCompany} onClose={() => setOpenId(null)} onUpdate={updateCompany} onDelete={deleteCompany} />
@@ -511,6 +654,9 @@ function JobHuntCommand() {
         </button>
         <button className={`bottom-nav-btn ${view === 'status' ? 'active' : ''}`} onClick={() => setView('status')}>
           {view === 'status' && <span className="nav-indicator" />}<ListChecks size={19} />選考状況
+        </button>
+        <button className={`bottom-nav-btn ${view === 'submissions' ? 'active' : ''}`} onClick={() => setView('submissions')}>
+          {view === 'submissions' && <span className="nav-indicator" />}<ClipboardCheck size={19} />提出物
         </button>
       </div>
     </div>
@@ -613,8 +759,8 @@ try {
   .stage-btn { background: var(--paper); border: 1px solid var(--paper-line); color: var(--ink-soft); font-family: inherit; font-size: 11px; font-weight: 700; padding: 6px 11px; border-radius: 20px; cursor: pointer; }
   .stage-btn.active { background: var(--navy); color: #fff; border-color: var(--navy); }
   .stage-btn.reject.active { background: var(--vermilion); border-color: var(--vermilion); }
-  .detail-tabs { display: flex; gap: 4px; margin-bottom: 14px; }
-  .tab-btn { flex: 1; background: var(--paper); border: 1px solid var(--paper-line); color: var(--ink-faint); font-family: inherit; font-size: 12px; font-weight: 700; padding: 10px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
+  .detail-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 14px; }
+  .tab-btn { flex: 1; min-width: 76px; background: var(--paper); border: 1px solid var(--paper-line); color: var(--ink-faint); font-family: inherit; font-size: 11.5px; font-weight: 700; padding: 9px 4px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; }
   .tab-btn.active { color: var(--brass); border-color: var(--brass); background: var(--brass-soft); }
   .info-grid { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
   .info-field { display: flex; flex-direction: column; gap: 6px; font-size: 11px; font-weight: 700; color: var(--ink-soft); }
@@ -638,6 +784,18 @@ try {
   .event-meta { display: flex; gap: 10px; font-size: 10px; color: var(--ink-soft); margin-top: 2px; }
   .event-meta span { display: flex; align-items: center; gap: 3px; }
   .event-add-form { display: flex; flex-direction: column; gap: 7px; background: var(--paper); border: 1px solid var(--paper-line); border-radius: 4px; padding: 11px; }
+  .submission-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .submission-row { display: flex; align-items: center; gap: 10px; background: #FBFAF7; border: 1px solid var(--paper-line); border-radius: 4px; padding: 9px 11px; }
+  .submission-row.done { opacity: 0.55; }
+  .submission-check { background: none; border: none; color: var(--navy); padding: 0; cursor: pointer; display: flex; flex-shrink: 0; }
+  .submission-row.done .submission-check { color: var(--brass); }
+  .submission-info { flex: 1; min-width: 0; }
+  .submission-title { font-size: 13px; font-weight: 700; }
+  .submission-row.done .submission-title { text-decoration: line-through; }
+  .submission-due { font-size: 10.5px; color: var(--ink-soft); margin-top: 2px; }
+  .submission-meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 3px; }
+  .submission-meta-row .submission-due { margin-top: 0; }
+  .submission-due.overdue { color: var(--vermilion); font-weight: 700; }
   .event-add-form input { background: #FBFAF7; border: 1px solid var(--paper-line); color: var(--ink); padding: 9px 10px; border-radius: 3px; font-family: inherit; font-size: 13px; }
   .event-add-row { display: flex; gap: 7px; }
   .event-add-row input { flex: 1; }
@@ -664,7 +822,7 @@ try {
   .status-mini-name { font-size: 12px; font-weight: 700; margin-bottom: 3px; line-height: 1.3; }
   .status-mini-meta { display: flex; gap: 6px; flex-wrap: wrap; font-size: 9.5px; color: var(--ink-faint); }
   .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: var(--paper); border-top: 1px solid var(--ink); display: flex; z-index: 40; padding-bottom: env(safe-area-inset-bottom, 0); }
-  .bottom-nav-btn { flex: 1; background: none; border: none; color: var(--ink-faint); font-family: inherit; font-size: 10.5px; font-weight: 700; padding: 10px 4px 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; position: relative; }
+  .bottom-nav-btn { flex: 1; background: none; border: none; color: var(--ink-faint); font-family: inherit; font-size: 9.5px; font-weight: 700; padding: 9px 2px 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; position: relative; }
   .bottom-nav-btn.active { color: var(--vermilion); }
   .nav-indicator { position: absolute; top: 0; width: 28px; height: 2px; background: var(--vermilion); left: 50%; transform: translateX(-50%); }
 </style>
