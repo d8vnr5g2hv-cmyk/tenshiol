@@ -324,8 +324,49 @@ function CompanyDetail({ company, onClose, onUpdate, onDelete }) {
   );
 }
 
-function CalendarView({ companies }) {
+function DayDetail({ dateStr, events, onClose, onOpenCompany }) {
+  const [y, m, d] = dateStr.split('-');
+  const sorted = events.slice().sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  return (
+    <div className="detail-overlay" onClick={onClose}>
+      <div className="detail-panel day-detail-panel" onClick={e => e.stopPropagation()}>
+        <div className="detail-header">
+          <div>
+            <div className="header-eyebrow">{y}年{Number(m)}月{Number(d)}日</div>
+            <h2 className="header-title" style={{ fontSize: 20 }}>この日の予定</h2>
+          </div>
+          <button className="icon-btn" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="event-list">
+          {sorted.length === 0 && <p className="empty-note">この日の予定はなし。</p>}
+          {sorted.map(ev => (
+            <div
+              key={ev.id}
+              className="event-row day-event-row"
+              onClick={() => { if (onOpenCompany && ev.companyId) { onOpenCompany(ev.companyId); onClose(); } }}
+            >
+              <div className="event-date-badge" style={{ borderColor: STAGE_COLOR[ev.status], background: 'transparent' }}>
+                <span className="event-date-day" style={{ color: STAGE_COLOR[ev.status] }}>{ev.time || '終日'}</span>
+              </div>
+              <div className="event-info">
+                <div className="event-title">{ev.title}</div>
+                <div className="event-meta">
+                  <span className="info-chip">{ev.company}</span>
+                  {ev.place && <span><MapPin size={11} /> {ev.place}</span>}
+                </div>
+              </div>
+              <ChevronRight size={16} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CalendarView({ companies, onOpenCompany }) {
   const [cursor, setCursor] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(null);
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
 
@@ -334,7 +375,7 @@ function CalendarView({ companies }) {
     companies.forEach(c => {
       c.events.forEach(e => {
         if (!map[e.date]) map[e.date] = [];
-        map[e.date].push({ ...e, company: c.name, status: c.status });
+        map[e.date].push({ ...e, company: c.name, status: c.status, companyId: c.id });
       });
     });
     return map;
@@ -348,6 +389,7 @@ function CalendarView({ companies }) {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   const pad = (n) => String(n).padStart(2, '0');
   const todayStr = new Date().toISOString().split('T')[0];
+  const MAX_VISIBLE = 2;
 
   return (
     <div className="calendar-view">
@@ -363,19 +405,36 @@ function CalendarView({ companies }) {
           const dateStr = `${year}-${pad(month + 1)}-${pad(d)}`;
           const dayEvents = allEvents[dateStr] || [];
           const isToday = dateStr === todayStr;
+          const hasEvents = dayEvents.length > 0;
           return (
-            <div key={i} className={`calendar-cell ${isToday ? 'today' : ''}`}>
+            <div
+              key={i}
+              className={`calendar-cell ${isToday ? 'today' : ''} ${hasEvents ? 'clickable' : ''}`}
+              onClick={() => hasEvents && setSelectedDate(dateStr)}
+            >
               <span className="cell-day-num">{d}</span>
-              {dayEvents.map(ev => (
+              {dayEvents.slice(0, MAX_VISIBLE).map(ev => (
                 <div key={ev.id} className="cell-event" style={{ borderLeftColor: STAGE_COLOR[ev.status] }}>
                   <span className="cell-event-company">{ev.company}</span>
                   <span className="cell-event-title">{ev.title}</span>
                 </div>
               ))}
+              {dayEvents.length > MAX_VISIBLE && (
+                <div className="cell-event-more">+{dayEvents.length - MAX_VISIBLE}件</div>
+              )}
             </div>
           );
         })}
       </div>
+
+      {selectedDate && (
+        <DayDetail
+          dateStr={selectedDate}
+          events={allEvents[selectedDate] || []}
+          onClose={() => setSelectedDate(null)}
+          onOpenCompany={onOpenCompany}
+        />
+      )}
     </div>
   );
 }
@@ -637,7 +696,7 @@ function JobHuntCommand() {
       {view === 'list' && (
         <CompanyListView companies={companies} onOpen={setOpenId} showAdd={showAdd} setShowAdd={setShowAdd} form={form} setForm={setForm} onAdd={addCompany} />
       )}
-      {view === 'calendar' && <CalendarView companies={companies} />}
+      {view === 'calendar' && <CalendarView companies={companies} onOpenCompany={setOpenId} />}
       {view === 'status' && <StatusBoard companies={companies} onOpen={setOpenId} />}
       {view === 'submissions' && <SubmissionsOverview companies={companies} onUpdate={updateCompany} />}
 
@@ -809,10 +868,16 @@ try {
   .calendar-cell { min-height: 64px; background: #FBFAF7; border: 1px solid var(--paper-line); border-radius: 3px; padding: 4px; font-size: 10px; overflow: hidden; }
   .calendar-cell.empty { background: none; border: none; }
   .calendar-cell.today { background: var(--brass-soft); border: 1px solid var(--brass); }
+  .calendar-cell.clickable { cursor: pointer; }
+  .calendar-cell.clickable:active { background: var(--navy-soft); }
   .cell-day-num { font-size: 10px; color: var(--ink-soft); font-weight: 700; }
   .cell-event { margin-top: 3px; border-left: 2px solid; padding-left: 4px; display: flex; flex-direction: column; line-height: 1.2; }
   .cell-event-company { font-size: 8px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cell-event-title { font-size: 9px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cell-event-more { margin-top: 3px; font-size: 8.5px; font-weight: 700; color: var(--navy); padding-left: 4px; }
+  .day-detail-panel { max-width: 480px; }
+  .day-event-row { cursor: pointer; justify-content: space-between; }
+  .day-event-row:active { background: var(--navy-soft); }
   .status-board { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 8px; margin: 0 -18px; padding-left: 18px; padding-right: 18px; }
   .status-column { background: #FBFAF7; border: 1px solid var(--paper-line); border-radius: 4px; min-width: 150px; flex-shrink: 0; }
   .status-column-header { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; padding: 9px 10px; border-bottom: 2px solid; }
